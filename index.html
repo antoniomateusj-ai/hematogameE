@@ -1,0 +1,1700 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HematoGame (Completo)</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+        body {  
+            text-align: center;  
+            font-family: 'VT323', monospace;  
+            margin-top: 20px;  
+            background-color: #282c34;  
+            color: #abb2bf;  
+            overflow: hidden;  
+        }
+        canvas {  
+            border: 2px solid #61afef;  
+            background-color: #21252b;  
+            display: block;  
+            margin: 0 auto;  
+            image-rendering: pixelated;  
+        }
+        h1 { color: #61afef; font-size: 3em; }
+        
+        audio {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>HematoGame</h1>
+    <canvas id="gameCanvas" width="640" height="480"></canvas>
+
+    <audio id="sound_fase1" src="sonoplastia/fase1_fluxo.mp3" preload="auto" loop></audio>
+    <audio id="sound_fase2" src="sonoplastia/fase2_lab.mp3" preload="auto" loop></audio>
+    <audio id="sound_fase3" src="sonoplastia/fase3_uti.mp3" preload="auto" loop></audio>
+    
+    <script>
+        window.addEventListener('DOMContentLoaded', (event) => {
+
+        // --- CONFIGURAÇÃO INICIAL ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.font = '20px "VT323"';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        const soundFase1 = document.getElementById('sound_fase1');
+        const soundFase2 = document.getElementById('sound_fase2');
+        const soundFase3 = document.getElementById('sound_fase3');
+        let audioInitialized = false;  
+
+        // --- ESTADO DO JOGO ---
+        const GAME_STATE = {  
+            INTRO: 'intro',  
+            CHAR_SELECT: 'char_select',  
+            LEVEL_INTRO: 'level_intro',  
+            PLAYING: 'playing',  
+            FEEDBACK: 'feedback',  
+            LEVEL_COMPLETE: 'level_complete',  
+            LEVEL_2_INTRO: 'level_2_intro',
+            PLAYING_LEVEL_2: 'playing_level_2',
+            FEEDBACK_LEVEL_2: 'feedback_level_2',
+            LEVEL_2_COMPLETE: 'level_2_complete',
+            LEVEL_3_INTRO: 'level_3_intro',
+            PLAYING_LEVEL_3: 'playing_level_3',
+            FEEDBACK_LEVEL_3: 'feedback_level_3',
+            GAME_COMPLETE: 'game_complete'
+        };
+        let currentState = GAME_STATE.INTRO;
+        
+        // --- DADOS DO JOGO ---
+        let selectedCharacter = null;
+        let titulosAcademicos = 0;
+        let tempoFase = 120;
+        let timerInterval = null;
+        
+        let feedbackMessage = "";  
+        let feedbackWasCorrect = false;
+        let feedbackMessage_level2 = "";  
+        let feedbackWasCorrect_level2 = false;
+        let diagnosisChecked = false;
+
+        let feedbackMessage_level3 = "";
+        let feedbackWasCorrect_level3 = false;
+        let stabilizationChecked = false;
+        let glucosePenaltyTriggered = false;
+        let glucosePenaltyTimer = 0;
+
+        // --- MUNDO E CÂMERA ---
+        const world = { width: 1280, height: 480, groundY: 440 }; // Fase 1
+        const camera = { x: 0, y: 0, width: canvas.width, height: canvas.height }; // Fase 1 e 3
+
+        // --- PLAYER ---
+        let player = {
+            x: 100, y: 400, width: 30, height: 40,
+            speed: 4, dx: 0, dy: 0,
+            gravity: 0.4, jumpPower: -10,
+            isJumping: false, onGround: false,
+            heldItem: null, heldItemIcon: null,  
+            heldItems_level2: [],  
+            heldItem_level3: null,  
+            interactRange: 50,  
+            lastInteractTime: 0  
+        };
+
+        // --- CONTROLES ---
+        let keys = {  
+            ArrowLeft: false,  
+            ArrowRight: false,  
+            ArrowUp: false,
+            ArrowDown: false,
+            Space: false,
+            KeyE: false  
+        };
+
+        // --- ÁREAS CLICÁVEIS ---
+        let startButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        let restartButtonRect = { x: 5, y: 5, width: 120, height: 35 };  
+        let levelIntroButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        let feedbackButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        let levelCompleteButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        let level2IntroButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        let feedbackButtonRect_level2 = { x: 220, y: 380, width: 200, height: 50 };
+        let level2CompleteButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        let level3IntroButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        let feedbackButtonRect_level3 = { x: 220, y: 380, width: 200, height: 50 };
+        let gameCompleteButtonRect = { x: 220, y: 380, width: 200, height: 50 };
+        
+        // *** ATUALIZAÇÃO: Botão Concluir Fase 3 ***
+        let concluirButtonRect_level3 = { x: canvas.width - 130, y: 5, width: 120, height: 35 };
+        
+        let charSelectRects = [
+            { x: 70, y: 200, width: 150, height: 200, nome: "Kaluanã" },
+            { x: 245, y: 200, width: 150, height: 200, nome: "Acará" },
+            { x: 420, y: 200, width: 150, height: 200, nome: "Lonã" }
+        ];
+
+        // --- OBJETOS DA FASE 1 ---
+        let platforms_level1 = [
+            { x: 0, y: world.groundY, width: world.width, height: 40, type: 'ground' },
+            { x: 150, y: 350, width: 100, height: 20, type: 'platform' },
+            { x: 300, y: 280, width: 120, height: 20, type: 'platform' },
+            { x: 450, y: 360, width: 80, height: 20, type: 'platform' },
+            { x: 600, y: 300, width: 150, height: 20, type: 'platform' },
+            { x: 800, y: 250, width: 100, height: 20, type: 'platform' },
+            { x: 950, y: 350, width: 100, height: 20, type: 'platform' },
+            { x: 1100, y: 200, width: 180, height: 20, type: 'platform' }  
+        ];
+        let moleculas_level1 = [
+            { x: 320, y: 245, width: 25, height: 25, nome: "Ferro", icon: '🔩', isCollected: false },
+            { x: 650, y: 265, width: 25, height: 25, nome: "Antibiótico", icon: '💊', isCollected: false },
+            { x: 970, y: 315, width: 25, height: 25, nome: "Hidroxiureia", icon: '🧬', isCollected: false }
+        ];
+        let localEntrega_level1 = { x: 1200, y: 150, width: 80, height: 50 };
+        let placaCoracao = { x: 1100, y: 380 };
+        let backgroundElements = [
+            { x: 160, originalY: 300, currentY: 300, speed: 0.02, offset: Math.random() * Math.PI, type: 'bacteria' },
+            { x: 410, originalY: 200, currentY: 200, speed: 0.02, offset: Math.random() * Math.PI, type: 'bacteria' },
+            { x: 760, originalY: 250, currentY: 250, speed: 0.02, offset: Math.random() * Math.PI, type: 'bacteria' },
+            { x: 1000, originalY: 380, currentY: 380, speed: 0.02, offset: Math.random() * Math.PI, type: 'bacteria' },
+            { x: 400, originalY: 100, currentY: 100, speed: 0.015, offset: Math.random() * Math.PI, type: 'hepcidina' },
+            { x: 80, originalY: 80, currentY: 80, speed: 0.018, offset: Math.random() * Math.PI, type: 'hepcidina' },
+            { x: 700, originalY: 120, currentY: 120, speed: 0.022, offset: Math.random() * Math.PI, type: 'hepcidina' }
+        ];
+        let animationTime = 0;  
+        
+        // --- OBJETOS DA FASE 2 ---
+        const world_level2 = { width: 640, height: 480, groundY: 440 };
+        let platforms_level2 = [
+            { x: 0, y: world_level2.groundY, width: world_level2.width, height: 40, type: 'ground' },
+            { x: 100, y: 340, width: 440, height: 20, type: 'bench' },
+            { x: 150, y: 240, width: 340, height: 15, type: 'shelf' },
+            { x: 550, y: 400, width: 90, height: 20, type: 'bench' }
+        ];
+        let items_level2 = [
+            { x: 110, y: 310, width: 25, height: 25, nome: "Linfócitos atípicos", icon: '🔬', isCollected: false, isCorrect: true },
+            { x: 190, y: 310, width: 25, height: 25, nome: "Vírus Epstein-Barr", icon: '🦠', isCollected: false, isCorrect: true },
+            { x: 270, y: 310, width: 25, height: 25, nome: "LDH alta", icon: '📈', isCollected: false, isCorrect: true },
+            { x: 350, y: 310, width: 25, height: 25, nome: "HbF alta", icon: '🩸', isCollected: false, isCorrect: false },
+            { x: 430, y: 310, width: 25, height: 25, nome: "Plaquetas baixas", icon: '📉', isCollected: false, isCorrect: false },
+            { x: 160, y: 210, width: 25, height: 25, nome: "Treponema Pallidum", icon: '🌀', isCollected: false, isCorrect: false },
+            { x: 220, y: 210, width: 25, height: 25, nome: "Leucócitos normais", icon: '⚪', isCollected: false, isCorrect: false },
+            { x: 280, y: 210, width: 25, height: 25, nome: "Citomegalovírus", icon: '🧬', isCollected: false, isCorrect: 'alternate' },
+            { x: 340, y: 210, width: 25, height: 25, nome: "Bilirrubina ind. alta", icon: '🟡', isCollected: false, isCorrect: false },
+            { x: 400, y: 210, width: 25, height: 25, nome: "IgE elevado", icon: '⚡', isCollected: false, isCorrect: false }
+        ];
+        let localEntrega_level2 = { x: 570, y: 320, width: 50, height: 80, nome: "Erlenmeyer" };
+        let backgroundParticles = [];  
+        for (let i = 0; i < 50; i++) {
+            backgroundParticles.push({
+                x: Math.random() * world_level2.width,
+                y: Math.random() * world_level2.height,
+                radius: Math.random() * 1.5,
+                speed: Math.random() * 0.2 + 0.1
+            });
+        }
+
+        // ================================================================
+        // === OBJETOS DA FASE 3 (Esteira da Homeostase) ===
+        // ================================================================
+        const world_level3 = { width: 1280, height: 480 };
+        
+        let markers_level3 = {
+            hemoglobina:  { nome: "Hemoglobina", valorAtual: 55,  valorAlvo: 100, taxa: 25 },
+            calcio:       { nome: "Cálcio Sérico", valorAtual: 170, valorAlvo: 100, taxa: -35 },
+            creatinina:   { nome: "Creatinina",    valorAtual: 410, valorAlvo: 100, taxa: -62 },
+            plasmocitos:  { nome: "Plasmócitos",   valorAtual: 420, valorAlvo: 100, taxa: -64 },
+            fenacetina:   { nome: "Fenacetina",    valorAtual: 100, valorAlvo: 0,   taxa: -25 },
+            glicose:      { nome: "Glicose",       valorAtual: 100, valorAlvo: 100, taxa: 50 }  
+        };
+
+        // Posição da Eritropoetina ATUALIZADA
+        let f3_eritropoetina = {  
+            x: 400, y: 180, width: 30, height: 30, // Posição mais central
+            nome: "Eritropoetina", letra: 'E', cor: '#e74c3c',  
+            isHeld: false  
+        };
+        
+        // Zonas da Esteira
+        let f3_medulaRect = { x: 0, y: 280, width: 150, height: 100, nome: "MEDULA ÓSSEA" };  
+        let f3_esteiraRect = { x: 150, y: 300, width: 980, height: 60 };
+        let f3_nefronRect = { x: 1130, y: 280, width: 150, height: 100, nome: "NÉFRON/APOPTOSE" };
+        
+        let f3_esteiraItems = [];
+        let f3_spawnTimer = 0;
+        let f3_esteiraSpeed = 2;  
+
+        const f3_itemPool = [
+            { nome: "Cálcio",      letra: 'C', cor: '#ecf0f1', tipo: 'mau' },
+            { nome: "Creatinina",  letra: 'R', cor: '#f1c40f', tipo: 'mau' },
+            { nome: "Plasmócitos", letra: 'P', cor: '#8e44ad', tipo: 'mau' },
+            { nome: "Fenacetina",  letra: 'F', cor: '#34495e', tipo: 'mau' },
+            { nome: "Glicose",     letra: 'G', cor: '#2ecc71', tipo: 'armadilha' }
+        ];
+        // ================================================================
+        // === FIM OBJETOS FASE 3 ===
+        // ================================================================
+
+        // ================================================================
+        // === FUNÇÃO: Desenhar Letra Pixel ===
+        // ================================================================
+        function drawPixelLetter(letra, x, y, cor, size = 5) {
+            ctx.fillStyle = cor;
+            const s = size;  
+            const cx = x - (s*2.5);  
+            const cy = y - (s*2.5);
+
+            const draw = (px, py) => ctx.fillRect(cx + px * s, cy + py * s, s, s);
+
+            switch (letra) {
+                case 'H': // Hemoglobina
+                    draw(0,0); draw(0,1); draw(0,2); draw(0,3); draw(0,4);
+                    draw(1,2); draw(2,2);
+                    draw(3,0); draw(3,1); draw(3,2); draw(3,3); draw(3,4);
+                    break;
+                case 'P': // Plasmócito
+                    draw(0,0); draw(0,1); draw(0,2); draw(0,3); draw(0,4);
+                    draw(1,0); draw(1,2);
+                    draw(2,0); draw(2,1);
+                    break;
+                case 'C': // Cálcio
+                    draw(0,1); draw(0,2); draw(0,3);
+                    draw(1,0); draw(1,4);
+                    draw(2,0); draw(2,4);
+                    break;
+                case 'R': // cReatinina
+                    draw(0,0); draw(0,1); draw(0,2); draw(0,3); draw(0,4);
+                    draw(1,0); draw(1,2);
+                    draw(2,0); draw(2,1); draw(2,3); draw(2,4);
+                    break;
+                case 'F': // Fenacetina
+                    draw(0,0); draw(0,1); draw(0,2); draw(0,3); draw(0,4);
+                    draw(1,0); draw(1,2);
+                    draw(2,0);
+                    break;
+                case 'G': // Glicose
+                    draw(0,1); draw(0,2); draw(0,3);
+                    draw(1,0); draw(1,4);
+                    draw(2,0); draw(2,2); draw(2,3); draw(2,4);
+                    draw(3,0); draw(3,4);
+                    draw(4,1); draw(4,2); draw(4,3);
+                    break;
+                case 'E': // Eritropoetina
+                    draw(0,0); draw(0,1); draw(0,2); draw(0,3); draw(0,4);
+                    draw(1,0); draw(1,2); draw(1,4);
+                    draw(2,0); draw(2,2); draw(2,4);
+                    break;
+            }
+        }
+
+
+        // --- FUNÇÕES DE DESENHO (SPRITES) ---
+        // (desenharDraMarilda, drawKaluanã, drawAcará, drawLonã - Sem Mudanças)
+        function desenharDraMarilda(x, y) {
+            ctx.fillStyle = 'white';
+            ctx.font = '16px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Dra. Marilda", x + 20, y - 5);
+            
+            ctx.fillStyle = '#362b2b'; ctx.fillRect(x, y + 10, 40, 20); ctx.fillRect(x - 5, y + 20, 50, 15);
+            ctx.fillStyle = '#8b5a2b'; ctx.fillRect(x + 5, y + 20, 30, 25);  
+            ctx.fillStyle = 'black'; ctx.fillRect(x + 10, y + 28, 5, 5); ctx.fillRect(x + 25, y + 28, 5, 5);
+            ctx.fillStyle = '#1e90ff'; ctx.fillRect(x, y + 45, 40, 40);
+            ctx.fillStyle = '#8b5a2b'; ctx.fillRect(x - 10, y + 50, 10, 20); ctx.fillRect(x + 40, y + 50, 10, 20);
+        }
+        function drawKaluanã(x, y) {
+            let skinTone = '#a0522d'; let clothes = '#228B22'; let headdress = '#FFD700';
+            ctx.fillStyle = headdress; ctx.fillRect(x + 10, y - 5, 10, 5);
+            ctx.fillStyle = clothes; ctx.fillRect(x + 5, y, 5, 5); ctx.fillRect(x + 20, y, 5, 5);  
+            ctx.fillStyle = skinTone; ctx.fillRect(x + 5, y + 5, 20, 15);
+            ctx.fillStyle = clothes; ctx.fillRect(x, y + 20, 30, 15);
+            ctx.fillStyle = skinTone; ctx.fillRect(x + 5, y + 35, 5, 5); ctx.fillRect(x + 20, y + 35, 5, 5);
+        }
+        function drawAcará(x, y) {
+            let skinTone = '#ffbaba'; let fireHair1 = '#FFD700'; let fireHair2 = '#FFA500'; let clothes = '#FF4500';
+            ctx.fillStyle = fireHair1; ctx.fillRect(x + 5, y, 20, 10);
+            ctx.fillStyle = fireHair2; ctx.fillRect(x, y - 5, 30, 5); ctx.fillRect(x + 10, y - 10, 10, 5);
+            ctx.fillStyle = skinTone; ctx.fillRect(x + 5, y + 10, 20, 10);
+            ctx.fillStyle = clothes; ctx.fillRect(x, y + 20, 30, 15);
+            ctx.fillStyle = skinTone; ctx.fillRect(x + 5, y + 35, 5, 5); ctx.fillRect(x + 20, y + 35, 5, 5);
+        }
+        function drawLonã(x, y) {
+            let skinTone = '#5a3d2b'; let clothesRed = '#FF0000'; let clothesBlack = '#000000';
+            ctx.fillStyle = skinTone; ctx.fillRect(x + 5, y + 5, 20, 15);
+            ctx.fillStyle = '#FFD700'; ctx.fillRect(x + 13, y + 10, 4, 4);
+            ctx.fillStyle = clothesRed; ctx.fillRect(x, y + 20, 30, 5);
+            ctx.fillStyle = clothesBlack; ctx.fillRect(x, y + 25, 30, 5);
+            ctx.fillStyle = clothesRed; ctx.fillRect(x, y + 30, 30, 5);
+            ctx.fillStyle = skinTone; ctx.fillRect(x + 5, y + 35, 5, 5); ctx.fillRect(x + 20, y + 35, 5, 5);
+        }
+        function drawPlayer(x, y) {
+            if (selectedCharacter === "Kaluanã") { drawKaluanã(x, y); }  
+            else if (selectedCharacter === "Acará") { drawAcará(x, y); }  
+            else if (selectedCharacter === "Lonã") { drawLonã(x, y); }  
+            else { ctx.fillStyle = 'purple'; ctx.fillRect(x, y, player.width, player.height); }
+            
+            if (currentState === GAME_STATE.PLAYING && player.heldItem) {
+                ctx.font = '25px "VT323"';
+                ctx.fillText(player.heldItemIcon, x + player.width / 2, y - 15);  
+            }
+
+            if (currentState === GAME_STATE.PLAYING_LEVEL_2) {
+                ctx.font = '20px "VT323"';
+                player.heldItems_level2.forEach((item, index) => {
+                    ctx.fillText(item.icon, x + (index * 15), y - 15);
+                });
+            }
+            
+            if (currentState === GAME_STATE.PLAYING_LEVEL_3 && player.heldItem_level3) {
+                drawPixelLetter(player.heldItem_level3.letra, x + player.width / 2, y - 20, player.heldItem_level3.cor);
+            }
+        }
+
+        // --- FUNÇÕES DE DESENHO FASE 1 ---
+        // (drawEndothelium, drawBackgroundElements, drawIntro, drawCharSelect, drawLevelIntro, drawGameplay_Level1, drawFeedback, drawLevelComplete)
+        function drawEndothelium() {
+            ctx.fillStyle = '#b36a6a';  
+            ctx.strokeStyle = '#a03c3c';
+            ctx.lineWidth = 1;
+            for(let y = 40; y < world.groundY; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y + Math.random() * 10);
+                ctx.bezierCurveTo(world.width * 0.25, y + 10 + Math.random() * 10,  
+                                world.width * 0.5, y - 10 + Math.random() * 10,  
+                                world.width * 0.75, y + 5 + Math.random() * 10,
+                                world.width, y + Math.random() * 10);
+                ctx.stroke();
+            }
+        }
+        function drawBackgroundElements() {
+            [ [100, 100], [250, 200], [500, 150], [700, 300], [950, 100], [1150, 250] ].forEach(pos => {
+                ctx.fillStyle = '#c0392b';
+                ctx.beginPath();
+                ctx.arc(pos[0], pos[1], 15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fa8072';  
+                ctx.beginPath();
+                ctx.arc(pos[0], pos[1], 8, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            backgroundElements.forEach(el => {
+                if (el.type === 'hepcidina') {
+                    ctx.fillStyle = '#3498db';  
+                    ctx.fillRect(el.x, el.currentY, 5, 5);  
+                    ctx.fillRect(el.x+5, el.currentY, 5, 5);  
+                    ctx.fillRect(el.x+10, el.currentY+5, 5, 5);
+                    if (el.x === 400 && el.originalY === 100) {  
+                        ctx.fillStyle = 'white';
+                        ctx.font = '14px "VT323"';
+                        ctx.textAlign = 'center';
+                        ctx.fillText("Hepcidina (Hormônio)", el.x + 8, el.currentY - 10);
+                    }
+                } else if (el.type === 'bacteria') {
+                    ctx.fillStyle = '#98c379';  
+                    ctx.fillRect(el.x, el.currentY, 5, 5);  
+                    ctx.fillRect(el.x+5, el.currentY+5, 5, 5);  
+                    ctx.fillRect(el.x+10, el.currentY, 5, 5);
+                    if (el.x === 160 && el.originalY === 300) {
+                        ctx.fillStyle = 'white';
+                        ctx.font = '14px "VT323"';
+                        ctx.textAlign = 'center';
+                        ctx.fillText("Bactéria (Streptococcus)", el.x + 8, el.currentY - 10);
+                    }
+                }
+            });
+        }
+        function drawIntro() {
+            ctx.fillStyle = '#21252b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            desenharDraMarilda(30, 350);
+            ctx.fillStyle = 'white'; ctx.strokeStyle = '#61afef'; ctx.lineWidth = 3;
+            ctx.fillRect(100, 200, 480, 120); ctx.strokeRect(100, 200, 480, 120);
+            ctx.fillStyle = 'black'; ctx.font = '18px "VT323"'; ctx.textAlign = 'left';
+            ctx.fillText("Olá! Bem-vindos ao HematoGame.", 115, 230);
+            ctx.fillText("Sou a Dra. Marilda e vou te ajudar", 115, 260);
+            ctx.fillText("a solucionar alguns casos.", 115, 290);
+            ctx.fillStyle = '#98c379'; ctx.fillRect(startButtonRect.x, startButtonRect.y, startButtonRect.width, startButtonRect.height);
+            ctx.fillStyle = 'black'; ctx.font = '22px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText("Iniciar Jogo", canvas.width / 2, 405);
+        }
+        function drawCharSelect() {
+            ctx.fillStyle = '#21252b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white'; ctx.font = '28px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText("Escolha seu Personagem:", canvas.width / 2, 80);
+            
+            charSelectRects.forEach((rect) => {
+                ctx.fillStyle = '#34495e'; ctx.strokeStyle = '#61afef'; ctx.lineWidth = 2;
+                ctx.fillRect(rect.x, rect.y, rect.width, rect.height); ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+                
+                let spriteX = rect.x + (rect.width / 2) - 15;  
+                let spriteY = rect.y + 40;
+                
+                if (rect.nome === "Kaluanã") drawKaluanã(spriteX, spriteY);
+                if (rect.nome === "Acará") drawAcará(spriteX, spriteY);
+                if (rect.nome === "Lonã") drawLonã(spriteX, spriteY);
+                
+                ctx.fillStyle = 'white'; ctx.font = '20px "VT323"'; ctx.fillText(rect.nome, rect.x + rect.width / 2, rect.y + 130);
+                ctx.font = '16px "VT323"';
+                if (rect.nome === "Kaluanã") ctx.fillText("O Grande Guerreiro", rect.x + rect.width / 2, rect.y + 160);
+                if (rect.nome === "Acará") ctx.fillText("Rainha do Fogo", rect.x + rect.width / 2, rect.y + 160);
+                if (rect.nome === "Lonã") ctx.fillText("Guardião dos Caminhos", rect.x + rect.width / 2, rect.y + 160);
+            });
+        }
+        function drawLevelIntro() {
+            ctx.fillStyle = '#21252b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // *** ATUALIZAÇÃO 4.1: Adicionada Dra. Marilda ***
+            desenharDraMarilda(30, 350); 
+            
+            ctx.fillStyle = 'white'; ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 3;
+            ctx.fillRect(100, 100, 440, 250); ctx.strokeRect(100, 100, 440, 250);
+
+            ctx.fillStyle = '#8B0000';
+            ctx.font = '24px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText(`ATENÇÃO, ${selectedCharacter.toUpperCase()}!`, canvas.width / 2, 130);
+            
+            ctx.fillStyle = 'black';  
+            ctx.font = '18px "VT323"'; ctx.textAlign = 'left';
+            ctx.fillText("Um paciente apresenta sintomas graves.", 115, 180);
+            ctx.fillText("Suas análises indicam INFLAMAÇÃO e infecção!", 115, 210);
+            ctx.fillText("Navegue por este vaso sanguíneo, use as", 115, 240);
+            ctx.fillText("dicas da Dra. Marilda e escolha o TRATAMENTO", 115, 270);
+            ctx.fillText("correto para salvar o paciente!", 115, 300);
+            
+            ctx.fillStyle = '#98c379'; ctx.fillRect(levelIntroButtonRect.x, levelIntroButtonRect.y, levelIntroButtonRect.width, levelIntroButtonRect.height);
+            ctx.fillStyle = 'black'; ctx.font = '22px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText("Iniciar Missão", canvas.width / 2, 405);
+        }
+        function drawGameplay_Level1() {
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y);
+
+            ctx.fillStyle = '#d98080';  
+            ctx.fillRect(0, 0, world.width, world.height);
+            drawEndothelium();
+            drawBackgroundElements();  
+            ctx.fillStyle = '#a03c3c';  
+            ctx.fillRect(0, 0, world.width, 30);  
+
+            platforms_level1.forEach(p => {
+                ctx.fillStyle = (p.type === 'ground') ? '#a03c3c' : '#bd4f4f';  
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+            });
+            ctx.fillStyle = '#a0522d'; ctx.fillRect(placaCoracao.x, placaCoracao.y, 10, 60);
+            ctx.fillStyle = 'white'; ctx.fillRect(placaCoracao.x - 30, placaCoracao.y - 40, 100, 40);
+            ctx.fillStyle = 'black'; ctx.font = '20px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText("Coração", placaCoracao.x + 20, placaCoracao.y - 17);
+
+            moleculas_level1.forEach(mol => {
+                if (!mol.isCollected) {
+                    ctx.font = '30px "VT323"';  
+                    ctx.fillText(mol.icon, mol.x + mol.width / 2, mol.y + mol.height / 2);
+                    ctx.fillStyle = 'white';
+                    ctx.font = '16px "VT323"';  
+                    ctx.fillText(mol.nome, mol.x + mol.width / 2, mol.y - 15);
+                }
+            });
+            ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = 'white'; ctx.lineWidth = 2;
+            ctx.strokeRect(localEntrega_level1.x, localEntrega_level1.y, localEntrega_level1.width, localEntrega_level1.height);
+            ctx.font = '18px "VT323"';
+            ctx.fillText("Entregue", localEntrega_level1.x + localEntrega_level1.width/2, localEntrega_level1.y + localEntrega_level1.height/2);
+
+            drawPlayer(player.x, player.y);
+            ctx.restore();  
+
+            desenharDraMarilda(canvas.width - 80, 50);  
+            ctx.fillStyle = 'white';
+            ctx.fillRect(canvas.width - 450, 80, 360, 75);  
+            ctx.fillStyle = 'black';
+            ctx.font = '16px "VT323"';
+            ctx.textAlign = 'left';
+            ctx.fillText("Hum... caso grave.", canvas.width - 445, 95);
+            ctx.fillText("Análises: Ferro Baixo, Ferritina Alta.", canvas.width - 445, 115);
+            ctx.fillText("O que isso significa...?", canvas.width - 445, 135);
+            
+            ctx.textAlign = 'center';  
+            ctx.fillStyle = '#e06c75';  
+            ctx.fillRect(restartButtonRect.x, restartButtonRect.y, restartButtonRect.width, restartButtonRect.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '20px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Reiniciar", restartButtonRect.x + restartButtonRect.width / 2, restartButtonRect.y + restartButtonRect.height / 2 + 3);
+
+            ctx.fillStyle = 'white';
+            ctx.font = '28px "VT323"';
+            ctx.textAlign = 'left';  
+            ctx.fillText(`Tempo: ${tempoFase}s`, 140, 24);  
+        }
+        function drawFeedback() {
+            drawGameplay_Level1();  
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = 'white';  
+            ctx.strokeStyle = feedbackWasCorrect ? '#98c379' : '#e74c3c';  
+            ctx.lineWidth = 3;
+            ctx.fillRect(100, 150, 440, 180);
+            ctx.strokeRect(100, 150, 440, 180);
+
+            ctx.fillStyle = feedbackWasCorrect ? '#98c379' : '#e74c3c';
+            ctx.font = '24px "VT323"';  
+            ctx.textAlign = 'center';
+            ctx.fillText(feedbackWasCorrect ? "RESPOSTA CORRETA!" : "QUASE LÁ!", canvas.width / 2, 180);
+
+            ctx.fillStyle = 'black';  
+            ctx.font = '18px "VT323"';
+            let lines = feedbackMessage.split('\n');  
+            lines.forEach((line, index) => {
+                ctx.fillText(line, canvas.width / 2, 220 + (index * 25));
+            });
+
+            ctx.fillStyle = feedbackWasCorrect ? '#98c379' : '#e06c75';
+            ctx.fillRect(feedbackButtonRect.x, feedbackButtonRect.y, feedbackButtonRect.width, feedbackButtonRect.height);
+            ctx.fillStyle = 'black';  
+            ctx.font = '22px "VT323"';  
+            ctx.textAlign = 'center';
+            ctx.fillText(feedbackWasCorrect ? "Coletar Título" : "Tentar Novamente", canvas.width / 2, 405);
+        }
+        function drawLevelComplete() {
+            ctx.fillStyle = '#21252b';  
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = '100px "VT323"';
+            ctx.fillText('🏅', canvas.width / 2, 150);
+
+            ctx.fillStyle = '#f1c40f';  
+            ctx.font = '28px "VT323"';
+            ctx.fillText("MISSÃO CUMPRIDA! (FASE 1)", canvas.width / 2, 250);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '22px "VT323"';
+            ctx.fillText(`Você recebeu 1 Título Acadêmico!`, canvas.width / 2, 300);
+            ctx.fillText(`Total: ${titulosAcademicos} Título(s)`, canvas.width / 2, 330);
+
+            ctx.fillStyle = '#98c379';  
+            ctx.fillRect(levelCompleteButtonRect.x, levelCompleteButtonRect.y, levelCompleteButtonRect.width, levelCompleteButtonRect.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '22px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Próxima Fase", canvas.width / 2, 405);  
+        }
+
+        
+        // --- FASE 2: FUNÇÕES DE DESENHO ---
+        // (drawLevel2Intro, drawLabBackground, drawGameplay_Level2, drawFeedback_Level2, drawLevel2Complete)
+        function drawLevel2Intro() {
+            ctx.fillStyle = '#21252b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawLabBackground();  
+            desenharDraMarilda(30, 350);
+            
+            ctx.fillStyle = 'white'; ctx.strokeStyle = '#61afef'; ctx.lineWidth = 3;
+            ctx.fillRect(100, 100, 480, 250); ctx.strokeRect(100, 100, 480, 250);
+
+            ctx.fillStyle = '#005a9c';  
+            ctx.font = '24px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText(`MUDANÇA DE CENÁRIO, ${selectedCharacter.toUpperCase()}!`, canvas.width / 2, 130);
+            
+            ctx.fillStyle = 'black';
+            ctx.font = '18px "VT323"'; ctx.textAlign = 'left';
+            ctx.fillText("Saímos do vaso. O paciente apresenta fadiga, febre", 115, 180);
+            ctx.fillText("e gânglios aumentados. Suspeito de Mononucleose!", 115, 210);
+            ctx.fillText("Vá até a bancada do laboratório, colete 3 amostras", 115, 240);
+            ctx.fillText("para confirmar o diagnóstico. Use [E] para coletar", 115, 270);
+            ctx.fillText("e entregar no Erlenmeyer. Rápido, 90 segundos!", 115, 300);
+            
+            ctx.fillStyle = '#98c379'; ctx.fillRect(level2IntroButtonRect.x, level2IntroButtonRect.y, level2IntroButtonRect.width, level2IntroButtonRect.height);
+            ctx.fillStyle = 'black'; ctx.font = '22px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText("Ir ao Laboratório", canvas.width / 2, 405);
+        }
+        function drawLabBackground() {
+            ctx.fillStyle = '#e0e8f0';  
+            ctx.fillRect(0, 0, world_level2.width, world_level2.height);
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            backgroundParticles.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            ctx.fillStyle = '#bdc3c7';
+            ctx.fillRect(20, 50, 80, 150);  
+            ctx.fillRect(540, 50, 80, 200);
+            
+            ctx.fillStyle = '#7ec0ee';
+            ctx.fillRect(250, 70, 140, 80);
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(250, 70, 140, 80);
+
+            ctx.fillStyle = '#34495e';
+            ctx.fillRect(50, 400, 30, 40);
+            ctx.fillRect(200, 195, 40, 45);
+            ctx.fillRect(215, 180, 10, 15);
+        }
+        function drawGameplay_Level2() {
+            ctx.save();
+            
+            drawLabBackground();
+            
+            platforms_level2.forEach(p => {
+                if (p.type === 'ground') {
+                    ctx.fillStyle = '#95a5a6';
+                } else {
+                    ctx.fillStyle = '#7f8c8d';
+                }
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+            });
+
+            let playerNearItem = null;
+            items_level2.forEach(item => {
+                if (!item.isCollected) {
+                    ctx.font = '30px "VT323"';  
+                    ctx.fillText(item.icon, item.x + item.width / 2, item.y + item.height / 2);
+                    
+                    if (AABBCollision(player, {x: item.x - player.interactRange/2, y: item.y - player.interactRange/2, width: item.width + player.interactRange, height: item.height + player.interactRange})) {
+                        playerNearItem = item;
+                    }
+                }
+            });
+
+            let delivery = localEntrega_level2;
+            ctx.fillStyle = 'rgba(178, 235, 242, 0.7)';
+            ctx.strokeStyle = '#005a9c';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(delivery.x, delivery.y + delivery.height);
+            ctx.lineTo(delivery.x + 10, delivery.y + 10);
+            ctx.lineTo(delivery.x + 15, delivery.y);
+            ctx.lineTo(delivery.x + delivery.width - 15, delivery.y);
+            ctx.lineTo(delivery.x + delivery.width - 10, delivery.y + 10);
+            ctx.lineTo(delivery.x + delivery.width, delivery.y + delivery.height);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = 'black';
+            ctx.font = '16px "VT323"';
+            ctx.fillText("Entregar", delivery.x + delivery.width / 2, delivery.y - 15);
+
+            drawPlayer(player.x, player.y);
+            ctx.restore();  
+
+            // *** ATUALIZAÇÃO 4.2: Adicionada Dra. Marilda ***
+            desenharDraMarilda(canvas.width - 80, 50);
+
+            ctx.textAlign = 'center';  
+            ctx.fillStyle = '#e06c75';  
+            ctx.fillRect(restartButtonRect.x, restartButtonRect.y, restartButtonRect.width, restartButtonRect.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '20px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Reiniciar", restartButtonRect.x + restartButtonRect.width / 2, restartButtonRect.y + restartButtonRect.height / 2 + 3);
+
+            ctx.fillStyle = 'white';
+            ctx.font = '28px "VT323"';
+            ctx.textAlign = 'left';  
+            ctx.fillText(`Tempo: ${tempoFase}s`, canvas.width / 2 - 50, 24);  
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(canvas.width / 2 - 100, 40, 200, 40);
+            ctx.fillStyle = 'white';
+            ctx.font = '20px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Inventário (Máx 3)", canvas.width / 2, 58);
+            ctx.font = '25px "VT323"';
+            player.heldItems_level2.forEach((item, index) => {
+                ctx.fillText(item.icon, canvas.width / 2 - 30 + (index * 30), 80);
+            });
+
+            ctx.font = '20px "VT323"';
+            ctx.textAlign = 'center';
+            
+            let nearDelivery = AABBCollision(player, {x: localEntrega_level2.x - player.interactRange/2, y: localEntrega_level2.y - player.interactRange/2, width: localEntrega_level2.width + player.interactRange, height: localEntrega_level2.height + player.interactRange});
+
+            if ((playerNearItem && player.heldItems_level2.length < 3) || (nearDelivery && player.heldItems_level2.length > 0)) {
+                ctx.fillStyle = 'white';
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                let boxY = canvas.height - 100;
+                let boxHeight = 60;
+                ctx.fillRect(canvas.width / 2 - 200, boxY, 400, boxHeight);
+                ctx.strokeRect(canvas.width / 2 - 200, boxY, 400, boxHeight);
+                
+                ctx.fillStyle = 'black';  
+                
+                if (playerNearItem && player.heldItems_level2.length < 3) {
+                    ctx.fillText(playerNearItem.nome, canvas.width / 2, boxY + 20);  
+                    ctx.fillText("Pressione [E] para coletar", canvas.width / 2, boxY + 45);  
+                } else if (nearDelivery && player.heldItems_level2.length > 0) {
+                    ctx.fillText("Erlenmeyer (Local de Entrega)", canvas.width / 2, boxY + 20);  
+                    ctx.fillText("Pressione [E] para entregar diagnóstico", canvas.width / 2, boxY + 45);  
+                }
+            }
+        }
+        function drawFeedback_Level2() {
+            drawGameplay_Level2();  
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = 'white';  
+            ctx.strokeStyle = feedbackWasCorrect_level2 ? '#98c379' : '#e74c3c';  
+            ctx.lineWidth = 3;
+            ctx.fillRect(80, 130, 480, 220);  
+            ctx.strokeRect(80, 130, 480, 220);
+
+            ctx.fillStyle = feedbackWasCorrect_level2 ? '#98c379' : '#e74c3c';
+            ctx.font = '24px "VT323"';  
+            ctx.textAlign = 'center';
+            ctx.fillText(feedbackWasCorrect_level2 ? "DIAGNÓSTICO CORRETO!" : "DIAGNÓSTICO INCORRETO!", canvas.width / 2, 160);
+
+            ctx.fillStyle = 'black';  
+            ctx.font = '18px "VT323"';
+            let lines = feedbackMessage_level2.split('\n');  
+            lines.forEach((line, index) => {
+                ctx.fillText(line, canvas.width / 2, 200 + (index * 25));
+            });
+
+            ctx.fillStyle = feedbackWasCorrect_level2 ? '#98c379' : '#e06c75';
+            ctx.fillRect(feedbackButtonRect_level2.x, feedbackButtonRect_level2.y, feedbackButtonRect_level2.width, feedbackButtonRect_level2.height);
+            ctx.fillStyle = 'black';  
+            ctx.font = '22px "VT323"';  
+            ctx.textAlign = 'center';
+            ctx.fillText(feedbackWasCorrect_level2 ? "Coletar Título" : "Tentar Novamente", canvas.width / 2, 405);
+        }
+        function drawLevel2Complete() {
+            ctx.fillStyle = '#21252b';  
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = '100px "VT323"';
+            ctx.fillText('🏆', canvas.width / 2, 150);  
+
+            ctx.fillStyle = '#f1c40f';  
+            ctx.font = '28px "VT323"';
+            ctx.fillText("FASE 2 CONCLUÍDA!", canvas.width / 2, 250);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '22px "VT323"';
+            ctx.fillText(`Diagnóstico de Mononucleose completo!`, canvas.width / 2, 300);
+            ctx.fillText(`Total: ${titulosAcademicos} Título(s)`, canvas.width / 2, 330);
+
+            ctx.fillStyle = '#98c379';  
+            ctx.fillRect(level2CompleteButtonRect.x, level2CompleteButtonRect.y, level2CompleteButtonRect.width, level2CompleteButtonRect.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '22px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Próxima Fase (Final)", canvas.width / 2, 405);
+        }
+
+
+        // ================================================================
+        // === FUNÇÕES DE DESENHO ATUALIZADAS (FASE 3) ===
+        // ================================================================
+
+        function drawLevel3Intro() {
+            ctx.fillStyle = '#21252b'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            desenharDraMarilda(30, 350);
+            
+            ctx.fillStyle = 'white'; ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 3;
+            ctx.fillRect(100, 80, 480, 280); ctx.strokeRect(100, 80, 480, 280);
+
+            ctx.fillStyle = '#8B0000';  
+            ctx.font = '24px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText(`EMERGÊNCIA, ${selectedCharacter.toUpperCase()}!`, canvas.width / 2, 110);
+            
+            ctx.fillStyle = 'black';
+            ctx.font = '18px "VT323"'; ctx.textAlign = 'left';
+            ctx.fillText("Paciente em crise! Mieloma Múltiplo agudo.", 115, 150);
+            ctx.fillText("Sintomas CRAB: Cálcio, Renal, Anemia, Plasmócitos.", 115, 180);
+            ctx.fillText("Temos 90 segundos para estabilizar!", 115, 210); // ATUALIZADO (era 30)
+            ctx.fillText("Colete [E] a Eritropoetina (E) e leve à Medula.", 115, 240);
+            ctx.fillText("Limpe [E] as moléculas ruins da esteira.", 115, 270);
+            ctx.fillText("Cuidado, algumas moléculas devem ser ignoradas!", 115, 300);
+            ctx.fillText("Rápido! O tempo está correndo!", 115, 330);
+
+            ctx.fillStyle = '#98c379'; ctx.fillRect(level3IntroButtonRect.x, level3IntroButtonRect.y, level3IntroButtonRect.width, level3IntroButtonRect.height);
+            ctx.fillStyle = 'black'; ctx.font = '22px "VT323"'; ctx.textAlign = 'center';
+            ctx.fillText("Iniciar Estabilização", canvas.width / 2, 405);
+        }
+
+        // --- ATUALIZADO: drawMarkerBar (com legenda de letra) ---
+        function drawMarkerBar(marker, letra, x, y, width) {
+            const barHeight = 8;
+            const targetWidth = 4;
+            
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'left';
+            ctx.font = '16px "VT323"';
+            
+            // Desenha a Legenda [LETRA] NOME: VALOR%
+            drawPixelLetter(letra, x + 8, y + barHeight + 4, 'white', 2);
+            ctx.fillText(`${marker.nome}: ${Math.round(marker.valorAtual)}%`, x + 25, y + barHeight / 2);
+            
+            ctx.fillStyle = '#444';
+            ctx.fillRect(x, y + barHeight + 5, width, barHeight);
+
+            let valorNorm = marker.valorAtual / 200;  
+            if (marker.nome === "Fenacetina") valorNorm = marker.valorAtual / 100;
+            if (valorNorm > 1) valorNorm = 1;
+            if (valorNorm < 0) valorNorm = 0;
+
+            if (marker.nome === "Fenacetina") {
+                 ctx.fillStyle = (marker.valorAtual > 10) ? '#e74c3c' : '#98c379';
+            } else if (marker.nome === "Glicose") {
+                 ctx.fillStyle = (marker.valorAtual === 100) ? '#98c379' : '#e74c3c';
+            } else {
+                if (marker.valorAtual >= 85 && marker.valorAtual <= 115) {
+                    ctx.fillStyle = '#98c379';  
+                } else if (marker.valorAtual < 50 || marker.valorAtual > 150) {
+                    ctx.fillStyle = '#e74c3c';  
+                } else {
+                    ctx.fillStyle = '#f1c40f';  
+                }
+            }
+            
+            ctx.fillRect(x, y + barHeight + 5, valorNorm * width, barHeight);
+            
+            ctx.fillStyle = 'white';
+            let alvoX = x;
+            if (marker.nome === "Fenacetina") {
+                alvoX = x;  
+            } else {
+                alvoX = x + (width / 2);  
+            }
+            ctx.fillRect(alvoX - targetWidth / 2, y + barHeight, targetWidth, barHeight + 10);
+        }
+
+        // --- drawGameplay_Level3 REESCRITO para "Esteira" ---
+        function drawGameplay_Level3() {
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y); // Usa a câmera
+            
+            // Fundo
+            ctx.fillStyle = '#3a3d4a';  
+            ctx.fillRect(0, 0, world_level3.width, world_level3.height);
+            
+            ctx.textAlign = 'center';
+            ctx.font = '16px "VT323"';
+
+            // Desenha as Zonas
+            ctx.fillStyle = '#1e90ff'; // Medula
+            ctx.fillRect(f3_medulaRect.x, f3_medulaRect.y, f3_medulaRect.width, f3_medulaRect.height);
+            ctx.fillStyle = 'white';
+            ctx.fillText(f3_medulaRect.nome, f3_medulaRect.x + f3_medulaRect.width/2, f3_medulaRect.y + f3_medulaRect.height/2);
+
+            ctx.fillStyle = '#7f8c8d'; // Esteira
+            ctx.fillRect(f3_esteiraRect.x, f3_esteiraRect.y, f3_esteiraRect.width, f3_esteiraRect.height);
+
+            ctx.fillStyle = '#f1c40f'; // Nefron
+            ctx.fillRect(f3_nefronRect.x, f3_nefronRect.y, f3_nefronRect.width, f3_nefronRect.height);
+            ctx.fillStyle = 'white';
+            ctx.fillText(f3_nefronRect.nome, f3_nefronRect.x + f3_nefronRect.width/2, f3_nefronRect.y + f3_nefronRect.height/2);
+
+            // *** ATUALIZAÇÃO 4.3: Adicionada Dra. Marilda ***
+            // Flutuando perto da Medula
+            desenharDraMarilda(180, 200);
+
+            // Desenha Eritropoetina (se não estiver sendo carregada)
+            if (!f3_eritropoetina.isHeld) {
+                let e = f3_eritropoetina;
+                drawPixelLetter(e.letra, e.x + e.width/2, e.y + e.height/2, e.cor, 6);
+                ctx.fillStyle = 'white';
+                ctx.font = '16px "VT323"';
+                ctx.fillText(e.nome, e.x + e.width/2, e.y - 15);
+            }
+
+            // Desenha itens na esteira
+            f3_esteiraItems.forEach(item => {
+                drawPixelLetter(item.letra, item.x + item.width/2, item.y + item.height/2, item.cor, 5);
+            });
+
+            // Desenha o Player
+            drawPlayer(player.x, player.y);
+
+            ctx.restore(); // Restaura para desenhar a HUD
+
+            // --- HUD Fixa (REFEITA - Compacta no TOPO) ---
+            
+            // Fundo da HUD
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, 130); // AUMENTADO para 130px
+
+            // 1. Botão Reiniciar
+            ctx.textAlign = 'center';  
+            ctx.fillStyle = '#e06c75';  
+            ctx.fillRect(restartButtonRect.x, restartButtonRect.y, restartButtonRect.width, restartButtonRect.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '20px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Reiniciar", restartButtonRect.x + restartButtonRect.width / 2, restartButtonRect.y + restartButtonRect.height / 2 + 3);
+
+            // *** ATUALIZAÇÃO: 1.5. Botão Concluir ***
+            ctx.textAlign = 'center';  
+            ctx.fillStyle = '#98c379'; // Verde
+            ctx.fillRect(concluirButtonRect_level3.x, concluirButtonRect_level3.y, concluirButtonRect_level3.width, concluirButtonRect_level3.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '20px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Concluir", concluirButtonRect_level3.x + concluirButtonRect_level3.width / 2, concluirButtonRect_level3.y + concluirButtonRect_level3.height / 2 + 3);
+
+
+            // 2. Tempo
+            ctx.fillStyle = 'white';
+            ctx.font = '32px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText(`TEMPO: ${tempoFase}s`, canvas.width / 2, 25);
+            
+            // 3. Alerta de Glicose
+            if (glucosePenaltyTimer > 0) {
+                ctx.fillStyle = 'red';
+                ctx.font = '24px "VT323"';
+                ctx.textAlign = 'right';
+                // *** ATUALIZAÇÃO: Posição Y movida para 45 para não sobrepor o botão Concluir ***
+                ctx.fillText("GLICOSE! -8s", canvas.width - 15, 45); 
+            }
+
+            // 4. Painel de Marcadores (com legenda)
+            const barWidth = 180;
+            // Y-offset ATUALIZADO para 50, 75, 100
+            drawMarkerBar(markers_level3.hemoglobina, 'H', 10, 50, barWidth);
+            drawMarkerBar(markers_level3.calcio, 'C', 10, 75, barWidth);
+            drawMarkerBar(markers_level3.creatinina, 'R', 10, 100, barWidth);
+            drawMarkerBar(markers_level3.plasmocitos, 'P', 330, 50, barWidth);
+            drawMarkerBar(markers_level3.fenacetina, 'F', 330, 80, barWidth); // Y 80
+            drawMarkerBar(markers_level3.glicose, 'G', 330, 105, barWidth); // Y 105
+        }
+
+        function drawFeedback_Level3() {
+            drawGameplay_Level3(); // Mostra o estado final
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = 'white';  
+            ctx.strokeStyle = feedbackWasCorrect_level3 ? '#98c379' : '#e74c3c';  
+            ctx.lineWidth = 3;
+            ctx.fillRect(80, 130, 480, 220);  
+            ctx.strokeRect(80, 130, 480, 220);
+
+            ctx.fillStyle = feedbackWasCorrect_level3 ? '#98c379' : '#e74c3c';
+            ctx.font = '24px "VT323"';  
+            ctx.textAlign = 'center';
+            ctx.fillText(feedbackWasCorrect_level3 ? "PACIENTE ESTABILIZADO!" : "FALHA NA ESTABILIZAÇÃO!", canvas.width / 2, 160);
+
+            ctx.fillStyle = 'black';  
+            ctx.font = '18px "VT323"';
+            let lines = feedbackMessage_level3.split('\n');  
+            lines.forEach((line, index) => {
+                ctx.fillText(line, canvas.width / 2, 200 + (index * 25));
+            });
+
+            ctx.fillStyle = feedbackWasCorrect_level3 ? '#98c379' : '#e06c75';
+            ctx.fillRect(feedbackButtonRect_level3.x, feedbackButtonRect_level3.y, feedbackButtonRect_level3.width, feedbackButtonRect_level3.height);
+            ctx.fillStyle = 'black';  
+            ctx.font = '22px "VT323"';  
+            ctx.textAlign = 'center';
+            ctx.fillText(feedbackWasCorrect_level3 ? "Coletar Título Final" : "Tentar Novamente", canvas.width / 2, 405);
+        }
+
+        function drawGameComplete() {
+            ctx.fillStyle = '#21252b';  
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.font = '100px "VT323"';
+            ctx.fillText('🎓', canvas.width / 2, 150);  
+
+            ctx.fillStyle = '#f1c40f';  
+            ctx.font = '28px "VT323"';
+            ctx.fillText("HEMOTOGAME CONCLUÍDO!", canvas.width / 2, 250);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '22px "VT323"';
+            ctx.fillText(`Você salvou todos os pacientes!`, canvas.width / 2, 300);
+            ctx.fillText(`Total de Títulos: ${titulosAcademicos}`, canvas.width / 2, 330);
+
+            // *** ATUALIZAÇÃO 2: Adicionada Mensagem de Prêmio ***
+            if (titulosAcademicos === 3) {
+                ctx.fillStyle = '#f1c40f'; // Cor de ouro
+                ctx.font = '24px "VT323"';
+                ctx.fillText(`Prêmio: CIENTISTA DO ANO!`, canvas.width / 2, 360);
+            }
+
+            ctx.fillStyle = '#98c379';  
+            ctx.fillRect(gameCompleteButtonRect.x, gameCompleteButtonRect.y, gameCompleteButtonRect.width, gameCompleteButtonRect.height);
+            ctx.fillStyle = 'black';
+            ctx.font = '22px "VT323"';
+            ctx.textAlign = 'center';
+            ctx.fillText("Jogar Novamente", canvas.width / 2, 405);
+        }
+
+        // ================================================================
+        // === FIM FUNÇÕES DE DESENHO ===
+        // ================================================================
+
+
+        // ================================================================
+        // === FÍSICA ATUALIZADA (com Modo F3) ===
+        // ================================================================
+        function applyPhysics(platforms) {
+            player.dx = 0;
+            if (keys.ArrowLeft) player.dx = -player.speed;
+            if (keys.ArrowRight) player.dx = player.speed;
+            
+            let currentWorldWidth = world.width;  
+            if (currentState === GAME_STATE.PLAYING_LEVEL_2) {
+                currentWorldWidth = world_level2.width;
+            } else if (currentState === GAME_STATE.PLAYING_LEVEL_3) {
+                currentWorldWidth = world_level3.width;  
+            }
+            
+            player.x += player.dx;
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > currentWorldWidth) player.x = currentWorldWidth - player.width;
+            
+            if (currentState === GAME_STATE.PLAYING_LEVEL_3) {
+                player.gravity = 0;
+                player.dy = 0;
+                if (keys.ArrowUp || keys.Space) player.dy = -player.speed;
+                if (keys.ArrowDown) player.dy = player.speed;
+                player.y += player.dy;
+                
+                if (player.y < 0) player.y = 0;
+                if (player.y + player.height > world_level3.height) player.y = world_level3.height - player.height;
+
+            } else {
+                player.gravity = 0.4;  
+                let prevPlayerY = player.y;  
+                player.dy += player.gravity;
+                player.y += player.dy;
+                player.onGround = false;
+
+                if (keys.ArrowUp) keys.Space = true;  
+                
+                platforms.forEach(p => {
+                    if (AABBCollision(player, p)) {
+                        let prevPlayerBottom = (prevPlayerY + player.height);
+                        if (player.dy >= 0 && prevPlayerBottom <= p.y) {
+                            player.y = p.y - player.height;  
+                            player.dy = 0;
+                            player.onGround = true;
+                            player.isJumping = false;
+                        }
+                        else if (player.dy < 0 && prevPlayerY >= p.y + p.height) {  
+                            player.y = p.y + p.height;  
+                            player.dy = 0;  
+                        }
+                    }
+                });
+                
+                if (keys.Space && player.onGround && !player.isJumping) {
+                    player.dy = player.jumpPower;
+                    player.isJumping = true;
+                    player.onGround = false;
+                    keys.Space = false;  
+                }
+                keys.ArrowUp = false;  
+            }
+        }
+        
+        // --- Lógica de Jogo (Fases 1, 2) ---
+        // (update_Level1_Logic, update_Level2_Logic, checkDiagnosis_Level2 - Sem Mudanças)
+        function update_Level1_Logic() {
+            applyPhysics(platforms_level1);
+            
+            camera.x = player.x - (canvas.width / 2) + (player.width / 2);
+            if (camera.x < 0) camera.x = 0;
+            if (camera.x > world.width - camera.width) {
+                camera.x = world.width - camera.width;
+            }
+
+            moleculas_level1.forEach(mol => {
+                if (!mol.isCollected && player.heldItem === null) {  
+                    if (AABBCollision(player, mol)) {
+                        mol.isCollected = true;
+                        player.heldItem = mol.nome;
+                        player.heldItemIcon = mol.icon;
+                    }
+                }
+            });
+
+            if (player.heldItem !== null) {  
+                if (AABBCollision(player, localEntrega_level1)) {
+                    if (timerInterval) clearInterval(timerInterval);  
+                    
+                    let itemEntregue = player.heldItem;
+                    player.heldItem = null;  
+                    
+                    if (itemEntregue === "Antibiótico") {
+                        feedbackMessage = "É uma Anemia de inflamação,\ntemos que tratar a origem!";
+                        feedbackWasCorrect = true;
+                        titulosAcademicos++;
+                    } else if (itemEntregue === "Ferro") {
+                        feedbackMessage = "Hum... a hepcidina está prendendo o ferro\npara combater a bactéria.\nNão podemos usá-lo!";
+                        feedbackWasCorrect = false;
+                    } else if (itemEntregue === "Hidroxiureia") {
+                        feedbackMessage = "Não lembro de ter visto\nHemoglobinas mutantes por aqui!";
+                        feedbackWasCorrect = false;
+                    }
+                    
+                    currentState = GAME_STATE.FEEDBACK;  
+                }
+            }
+        }
+        function update_Level2_Logic() {
+            applyPhysics(platforms_level2);
+
+            let now = Date.now();
+            if (keys.KeyE && (now - player.lastInteractTime > 500)) {  
+                player.lastInteractTime = now;
+                keys.KeyE = false;  
+                
+                let didInteract = false;
+
+                if (player.heldItems_level2.length < 3) {
+                    for (const item of items_level2) {
+                        if (!item.isCollected) {
+                             if (AABBCollision(player, {x: item.x - player.interactRange/2, y: item.y - player.interactRange/2, width: item.width + player.interactRange, height: item.height + player.interactRange})) {
+                                item.isCollected = true;
+                                player.heldItems_level2.push(item);
+                                didInteract = true;
+                                break;  
+                            }
+                        }
+                    }
+                }
+
+                if (!didInteract && player.heldItems_level2.length > 0) {
+                    let delivery = localEntrega_level2;
+                     if (AABBCollision(player, {x: delivery.x - player.interactRange/2, y: delivery.y - player.interactRange/2, width: delivery.width + player.interactRange, height: delivery.height + player.interactRange})) {
+                        checkDiagnosis_Level2();
+                     }
+                }
+            }
+        }
+        function checkDiagnosis_Level2() {
+            if (diagnosisChecked) return;  
+            diagnosisChecked = true;
+
+            if (timerInterval) clearInterval(timerInterval);
+
+            const inventory = player.heldItems_level2.map(item => item.nome);
+            const hasLinfocitos = inventory.includes("Linfócitos atípicos");
+            const hasLDH = inventory.includes("LDH alta");
+            const hasEpsteinBarr = inventory.includes("Vírus Epstein-Barr");
+            const hasCitomegalo = inventory.includes("Citomegalovírus");
+
+            const cond1 = hasLinfocitos && hasLDH && hasEpsteinBarr && inventory.length === 3;
+            const cond2 = hasLinfocitos && hasLDH && hasCitomegalo && inventory.length === 3;
+
+            if (cond1 || cond2) {
+                feedbackWasCorrect_level2 = true;
+                titulosAcademicos++;
+                feedbackMessage_level2 = "Correto! A presença de Linfócitos Atípicos,\n" +
+                                       "LDH alta e o Vírus (EBV ou CMV) são os\n" +
+                                       "marcadores clássicos da Mononucleose Infecciosa.\n" +
+                                       "Excelente diagnóstico!";
+            } else {
+                feedbackWasCorrect_level2 = false;
+                if (player.heldItems_level2.length < 3) {
+                    feedbackMessage_level2 = "Diagnóstico incompleto.\nVocê precisa coletar 3 amostras\npara fechar o caso.";
+                } else if (inventory.includes("HbF alta")) {
+                     feedbackMessage_level2 = "Quase! HbF alta está ligada a Talassemias,\n" +
+                                            "não Mononucleose. Tente focar nos\n" +
+                                            "marcadores de infecção viral e inflamação.";
+                } else {
+                    feedbackMessage_level2 = "Combinação incorreta.\nLembre-se: Mononucleose (MI) é uma infecção viral\n" +
+                                           "que causa reação no sistema imune (Linf. Atípicos)\n" +
+                                           "e inflamação (LDH alta).";
+                }
+            }
+            
+            currentState = GAME_STATE.FEEDBACK_LEVEL_2;
+        }
+        
+        // ================================================================
+        // === LÓGICA DE UPDATE REESCRITA (FASE 3) ===
+        // ================================================================
+        function update_Level3_Logic() {
+            applyPhysics(null); // Movimento e câmera
+            
+            camera.x = player.x - (canvas.width / 2) + (player.width / 2);
+            if (camera.x < 0) camera.x = 0;
+            if (camera.x > world_level3.width - camera.width) {
+                camera.x = world_level3.width - camera.width;
+            }
+
+            if (glucosePenaltyTimer > 0) {
+                glucosePenaltyTimer--;
+            }
+
+            f3_spawnTimer--;
+            if (f3_spawnTimer <= 0) {
+                let randomItemTemplate = f3_itemPool[Math.floor(Math.random() * f3_itemPool.length)];
+                f3_esteiraItems.push({
+                    ...randomItemTemplate,  
+                    x: f3_esteiraRect.x,
+                    y: f3_esteiraRect.y + (f3_esteiraRect.height / 2) - 15 + (Math.random() * 10 - 5),  
+                    width: 30,
+                    height: 30,
+                    id: Date.now() + Math.random()  
+                });
+                f3_spawnTimer = 60;  
+            }
+
+            let itemsToRemove = [];
+            for (const item of f3_esteiraItems) {
+                item.x += f3_esteiraSpeed;
+                if (item.x + item.width > f3_nefronRect.x) {
+                    itemsToRemove.push(item.id);
+                }
+            }
+            
+            let now = Date.now();
+            if (keys.KeyE && (now - player.lastInteractTime > 300)) {  
+                player.lastInteractTime = now;
+                keys.KeyE = false;  
+
+                // 1. Tentar Coletar Eritropoetina
+                if (!f3_eritropoetina.isHeld && AABBCollision(player, f3_eritropoetina)) {
+                    f3_eritropoetina.isHeld = true;
+                    player.heldItem_level3 = { ...f3_eritropoetina };  
+                }
+                // 2. Tentar Entregar Eritropoetina na Medula
+                else if (player.heldItem_level3 && player.heldItem_level3.nome === "Eritropoetina" && AABBCollision(player, f3_medulaRect)) {
+                    markers_level3.hemoglobina.valorAtual += markers_level3.hemoglobina.taxa;
+                    player.heldItem_level3 = null;  
+                    f3_eritropoetina.isHeld = false;  
+                    f3_eritropoetina.x = 400 + Math.random() * 400;
+                    f3_eritropoetina.y = 150 + Math.random() * 100;
+                }
+                // 3. Tentar Coletar/Destruir item na Esteira
+                else {
+                    for (const item of f3_esteiraItems) {
+                        if (AABBCollision(player, item)) {
+                            if (item.tipo === 'mau') {
+                                if (item.nome === "Cálcio") markers_level3.calcio.valorAtual = Math.max(0, markers_level3.calcio.valorAtual + markers_level3.calcio.taxa);
+                                if (item.nome === "Creatinina") markers_level3.creatinina.valorAtual = Math.max(0, markers_level3.creatinina.valorAtual + markers_level3.creatinina.taxa);
+                                if (item.nome === "Fenacetina") markers_level3.fenacetina.valorAtual = Math.max(0, markers_level3.fenacetina.valorAtual + markers_level3.fenacetina.taxa);
+                                if (item.nome === "Plasmócitos") markers_level3.plasmocitos.valorAtual = Math.max(0, markers_level3.plasmocitos.valorAtual + markers_level3.plasmocitos.taxa);
+                                itemsToRemove.push(item.id);
+                                break;  
+                            }  
+                            else if (item.tipo === 'armadilha') {
+                                glucosePenaltyTriggered = true;
+                                glucosePenaltyTimer = 120;  
+                                tempoFase -= 8;
+                                itemsToRemove.push(item.id);  
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            f3_esteiraItems = f3_esteiraItems.filter(item => !itemsToRemove.includes(item.id));
+        }
+
+
+        function checkDiagnosis_Level3() {
+            if (stabilizationChecked) return;
+            stabilizationChecked = true;
+            if (timerInterval) clearInterval(timerInterval);
+            
+            if (glucosePenaltyTriggered) {
+                feedbackWasCorrect_level3 = false;
+                feedbackMessage_level3 = "Falha! Você tocou na GLICOSE.\n" +
+                                       "Isso causou um choque hipoglicêmico no paciente.\n" +
+                                       "Esse marcador não deveria ser tocado.";
+                currentState = GAME_STATE.FEEDBACK_LEVEL_3;
+                return;
+            }
+            
+            if (markers_level3.fenacetina.valorAtual > 10) {  
+                feedbackWasCorrect_level3 = false;
+                feedbackMessage_level3 = "Falha! A droga carcinogênica (Fenacetina)\n" +
+                                       "não foi totalmente removida.\n" +
+                                       "O paciente não está estável para a próxima etapa.";
+                currentState = GAME_STATE.FEEDBACK_LEVEL_3;
+                return;
+            }
+
+            let hg_ok = markers_level3.hemoglobina.valorAtual > 55; // Pelo menos 1 entrega
+            let ca_ok = markers_level3.calcio.valorAtual <= 115;
+            let cr_ok = markers_level3.creatinina.valorAtual <= 115;
+            let pl_ok = markers_level3.plasmocitos.valorAtual <= 115;  
+            
+            if (hg_ok && ca_ok && cr_ok && pl_ok) {
+                feedbackWasCorrect_level3 = true;
+                titulosAcademicos++;
+                feedbackMessage_level3 = "Sucesso! Você reverteu a Anemia (Hb),\n" +
+                                       "corrigiu a Insuficiência Renal (Cr) e a\n" +
+                                       "Hipercalcemia (Ca). O paciente está estável.\n" +
+                                       "Os sintomas CRAB foram controlados!";
+            } else {
+                 feedbackWasCorrect_level3 = false;
+                 if (!hg_ok) feedbackMessage_level3 = "Falha! A Hemoglobina não foi restaurada.\nVocê precisava coletar a Eritropoetina (E)\ne levar até a Medula Óssea.";
+                 else if (!ca_ok || !cr_ok) feedbackMessage_level3 = "Falha! O Cálcio (C) ou a Creatinina (R) continuam altos.\nEles precisavam ser limpos da esteira.";
+                 else if (!pl_ok) feedbackMessage_level3 = "Falha! A infiltração de Plasmócitos (P) continua alta.\nEles precisavam ser limpos da esteira.";
+                 else feedbackMessage_level3 = "Incorreto! Os marcadores vitais não foram\nestabilizados.";
+            }
+
+            currentState = GAME_STATE.FEEDBACK_LEVEL_3;
+        }
+        
+        // --- UPDATE PRINCIPAL (Roteador) ---
+        function update() {
+            if (currentState === GAME_STATE.PLAYING || currentState === GAME_STATE.FEEDBACK || currentState === GAME_STATE.LEVEL_INTRO) {
+                animationTime += 0.05;  
+                backgroundElements.forEach(el => {
+                    el.currentY = el.originalY + Math.sin(animationTime + el.offset) * (10 + el.speed * 100);  
+                });
+            }
+            
+            if (currentState === GAME_STATE.LEVEL_2_INTRO || currentState === GAME_STATE.PLAYING_LEVEL_2 || currentState === GAME_STATE.FEEDBACK_LEVEL_2) {
+                backgroundParticles.forEach(p => {
+                    p.y += p.speed;
+                    if (p.y > world_level2.height) { p.y = 0; p.x = Math.random() * world_level2.width; }
+                });
+            }
+
+            if (currentState === GAME_STATE.PLAYING) {
+                update_Level1_Logic();
+            }  
+            else if (currentState === GAME_STATE.PLAYING_LEVEL_2) {
+                update_Level2_Logic();
+            }
+            else if (currentState === GAME_STATE.PLAYING_LEVEL_3) {
+                update_Level3_Logic();
+            }
+        }
+
+        // --- Gerenciador de Áudio ---
+        function manageAudio() {
+            if (!audioInitialized) return;  
+
+            const shouldPlayFase1 = (currentState === GAME_STATE.PLAYING || currentState === GAME_STATE.FEEDBACK);
+            const shouldPlayFase2 = (currentState === GAME_STATE.PLAYING_LEVEL_2 || currentState === GAME_STATE.FEEDBACK_LEVEL_2 || currentState === GAME_STATE.LEVEL_2_INTRO);
+            const shouldPlayFase3 = (currentState === GAME_STATE.PLAYING_LEVEL_3 || currentState === GAME_STATE.FEEDBACK_LEVEL_3 || currentState === GAME_STATE.LEVEL_3_INTRO);
+
+            try {
+                const fadeOut = (sound) => {
+                    if (sound.volume > 0) sound.volume = Math.max(0, sound.volume - 0.05);
+                    else sound.pause();
+                };
+                const fadeIn = (sound) => {
+                    if (sound.paused) sound.play().catch(e => {});
+                    if (sound.volume < 1) sound.volume = Math.min(1, sound.volume + 0.05);
+                };
+
+                if (shouldPlayFase1) {
+                    fadeIn(soundFase1);
+                    fadeOut(soundFase2);
+                    fadeOut(soundFase3);
+                } else if (shouldPlayFase2) {
+                    fadeOut(soundFase1);
+                    fadeIn(soundFase2);
+                    fadeOut(soundFase3);
+                } else if (shouldPlayFase3) {
+                    fadeOut(soundFase1);
+                    fadeOut(soundFase2);
+                    fadeIn(soundFase3);
+                } else {
+                    fadeOut(soundFase1);
+                    fadeOut(soundFase2);
+                    fadeOut(soundFase3);
+                }
+            } catch (e) {
+                console.error("Erro ao gerenciar áudio:", e);
+                audioInitialized = false;  
+            }
+        }
+
+        // --- LOOP PRINCIPAL DO JOGO ---
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            update();  
+            manageAudio();  
+            
+            if (currentState === GAME_STATE.INTRO) { drawIntro(); }
+            else if (currentState === GAME_STATE.CHAR_SELECT) { drawCharSelect(); }
+            else if (currentState === GAME_STATE.LEVEL_INTRO) { drawLevelIntro(); }
+            else if (currentState === GAME_STATE.PLAYING) { drawGameplay_Level1(); }
+            else if (currentState === GAME_STATE.FEEDBACK) { drawFeedback(); }
+            else if (currentState === GAME_STATE.LEVEL_COMPLETE) { drawLevelComplete(); }
+            
+            else if (currentState === GAME_STATE.LEVEL_2_INTRO) { drawLevel2Intro(); }
+            else if (currentState === GAME_STATE.PLAYING_LEVEL_2) { drawGameplay_Level2(); }
+            else if (currentState === GAME_STATE.FEEDBACK_LEVEL_2) { drawFeedback_Level2(); }
+            else if (currentState === GAME_STATE.LEVEL_2_COMPLETE) { drawLevel2Complete(); }
+
+            else if (currentState === GAME_STATE.LEVEL_3_INTRO) { drawLevel3Intro(); }
+            else if (currentState === GAME_STATE.PLAYING_LEVEL_3) { drawGameplay_Level3(); }
+            else if (currentState === GAME_STATE.FEEDBACK_LEVEL_3) { drawFeedback_Level3(); }
+            else if (currentState === GAME_STATE.GAME_COMPLETE) { drawGameComplete(); }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- FUNÇÕES DE CONTROLE ---
+        
+        function startTimer(duration) {
+            tempoFase = duration;
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                
+                let isPlaying = (currentState === GAME_STATE.PLAYING || currentState === GAME_STATE.PLAYING_LEVEL_2 || currentState === GAME_STATE.PLAYING_LEVEL_3);
+
+                if (isPlaying && tempoFase > 0) {
+                    tempoFase--;
+                } else if (isPlaying && tempoFase <= 0) {
+                    clearInterval(timerInterval);
+                    
+                    if(currentState === GAME_STATE.PLAYING) {
+                        feedbackMessage = "O tempo acabou! Tente novamente.";
+                        feedbackWasCorrect = false;
+                        currentState = GAME_STATE.FEEDBACK;
+                    }  
+                    else if (currentState === GAME_STATE.PLAYING_LEVEL_2) {
+                        feedbackMessage_level2 = "O tempo acabou!\nSem um diagnóstico, o paciente não pode\nser tratado. Tente novamente.";
+                        feedbackWasCorrect_level2 = false;
+                        diagnosisChecked = true;  
+                        currentState = GAME_STATE.FEEDBACK_LEVEL_2;
+                    }
+                    else if (currentState === GAME_STATE.PLAYING_LEVEL_3) {
+                        checkDiagnosis_Level3(); // Chama a checagem ao fim do tempo
+                    }
+                }
+            }, 1000);
+        }
+        
+        function reiniciarFase1() {
+            player.x = 100; player.y = 400; player.dy = 0; player.gravity = 0.4;
+            player.heldItem = null;  
+            camera.x = 0;  
+            moleculas_level1.forEach(mol => { mol.isCollected = false; });
+            currentState = GAME_STATE.PLAYING;
+            startTimer(120);  
+        }
+
+        function reiniciarFase2() {
+            player.x = 100; player.y = 400; player.dy = 0; player.gravity = 0.4;
+            player.heldItems_level2 = [];  
+            items_level2.forEach(item => { item.isCollected = false; });  
+            diagnosisChecked = false;  
+            currentState = GAME_STATE.PLAYING_LEVEL_2;
+            startTimer(90);  
+        }
+
+        // --- Reiniciar Fase 3 (ATUALIZADO) ---
+        function reiniciarFase3() {
+            player.x = 600; // Posição central
+            player.y = 200;  
+            player.dy = 0;  
+            player.gravity = 0; // Vôo livre
+            player.heldItem_level3 = null;
+            camera.x = 0;
+            
+            // Reseta os marcadores
+            markers_level3.hemoglobina.valorAtual = 55;
+            markers_level3.calcio.valorAtual = 170;
+            markers_level3.creatinina.valorAtual = 410;
+            markers_level3.plasmocitos.valorAtual = 420;
+            markers_level3.fenacetina.valorAtual = 100;
+            markers_level3.glicose.valorAtual = 100;  
+            
+            // Reseta Eritropoetina
+            f3_eritropoetina.isHeld = false;
+            f3_eritropoetina.x = 400; // Posição ATUALIZADA
+            f3_eritropoetina.y = 180;
+
+            // Limpa a esteira
+            f3_esteiraItems = [];
+            f3_spawnTimer = 60;  
+            
+            stabilizationChecked = false;  
+            glucosePenaltyTriggered = false;
+            glucosePenaltyTimer = 0;
+            
+            currentState = GAME_STATE.PLAYING_LEVEL_3;
+            
+            // *** ATUALIZAÇÃO 1: Tempo da Fase 3 aumentado ***
+            startTimer(90); // Tempo de 90s (era 30)
+        }
+
+        function reiniciarJogo() {
+            selectedCharacter = null;
+            titulosAcademicos = 0; // Reseta os títulos ao reiniciar o jogo todo
+            if (timerInterval) clearInterval(timerInterval);  
+            
+            player.heldItem = null;  
+            moleculas_level1.forEach(mol => { mol.isCollected = false; });
+            player.heldItems_level2 = [];  
+            items_level2.forEach(item => { item.isCollected = false; });
+            diagnosisChecked = false;
+            stabilizationChecked = false;
+            player.heldItem_level3 = null;
+
+            player.x = 100; player.y = 400; player.dy = 0; player.gravity = 0.4;  
+            camera.x = 0;  
+            
+            currentState = GAME_STATE.INTRO;  
+        }
+        
+        function handleMouseClick(event) {
+            if (!audioInitialized) {
+                audioInitialized = true;
+                soundFase1.play().catch(e => {}); soundFase1.pause(); soundFase1.volume = 0;
+                soundFase2.play().catch(e => {}); soundFase2.pause(); soundFase2.volume = 0;
+                soundFase3.play().catch(e => {}); soundFase3.pause(); soundFase3.volume = 0;
+            }
+
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+
+            if (currentState === GAME_STATE.INTRO) {
+                if (isClickInside(mouseX, mouseY, startButtonRect)) {
+                    currentState = GAME_STATE.CHAR_SELECT; return;
+                }
+            }  
+            else if (currentState === GAME_STATE.CHAR_SELECT) {
+                charSelectRects.forEach(rect => {
+                    if (isClickInside(mouseX, mouseY, rect)) {
+                        selectedCharacter = rect.nome;
+                        currentState = GAME_STATE.LEVEL_INTRO; return;
+                    }
+                });
+            }
+            else if (currentState === GAME_STATE.LEVEL_INTRO) {
+                if (isClickInside(mouseX, mouseY, levelIntroButtonRect)) {
+                    currentState = GAME_STATE.PLAYING;
+                    startTimer(120);  
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.PLAYING) {
+                if (isClickInside(mouseX, mouseY, restartButtonRect)) {
+                    reiniciarJogo(); return;
+                }
+            }
+            else if (currentState === GAME_STATE.FEEDBACK) {
+                if (isClickInside(mouseX, mouseY, feedbackButtonRect)) {
+                    if (feedbackWasCorrect) {
+                        currentState = GAME_STATE.LEVEL_COMPLETE;  
+                    } else {
+                        reiniciarFase1();
+                    }
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.LEVEL_COMPLETE) {
+                if (isClickInside(mouseX, mouseY, levelCompleteButtonRect)) {
+                    currentState = GAME_STATE.LEVEL_2_INTRO;
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.LEVEL_2_INTRO) {
+                 if (isClickInside(mouseX, mouseY, level2IntroButtonRect)) {
+                    player.x = 50; player.y = 400;  
+                    reiniciarFase2();  
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.PLAYING_LEVEL_2) {
+                if (isClickInside(mouseX, mouseY, restartButtonRect)) {
+                    reiniciarJogo(); return;
+                }
+            }
+             else if (currentState === GAME_STATE.FEEDBACK_LEVEL_2) {
+                if (isClickInside(mouseX, mouseY, feedbackButtonRect_level2)) {
+                    if (feedbackWasCorrect_level2) {
+                        currentState = GAME_STATE.LEVEL_2_COMPLETE;  
+                    } else {
+                        reiniciarFase2();
+                    }
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.LEVEL_2_COMPLETE) {
+                 if (isClickInside(mouseX, mouseY, level2CompleteButtonRect)) {
+                    currentState = GAME_STATE.LEVEL_3_INTRO;
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.LEVEL_3_INTRO) {
+                if (isClickInside(mouseX, mouseY, level3IntroButtonRect)) {
+                    reiniciarFase3();
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.PLAYING_LEVEL_3) {
+                 if (isClickInside(mouseX, mouseY, restartButtonRect)) {
+                    reiniciarJogo(); return;
+                 }
+                 // *** ATUALIZAÇÃO: Lógica de clique do botão Concluir ***
+                 else if (isClickInside(mouseX, mouseY, concluirButtonRect_level3)) {
+                    checkDiagnosis_Level3(); // Chama a checagem final
+                    return;
+                 }
+            }
+            else if (currentState === GAME_STATE.FEEDBACK_LEVEL_3) {
+                if (isClickInside(mouseX, mouseY, feedbackButtonRect_level3)) {
+                    if (feedbackWasCorrect_level3) {
+                        currentState = GAME_STATE.GAME_COMPLETE;  
+                    } else {
+                        reiniciarFase3();
+                    }
+                    return;
+                }
+            }
+            else if (currentState === GAME_STATE.GAME_COMPLETE) {
+                if (isClickInside(mouseX, mouseY, gameCompleteButtonRect)) {
+                    reiniciarJogo();
+                    return;
+                }
+            }
+        }
+        
+        function handleKeyDown(event) {
+            if (event.key === 'ArrowLeft') { keys.ArrowLeft = true; event.preventDefault(); }
+            if (event.key === 'ArrowRight') { keys.ArrowRight = true; event.preventDefault(); }
+            if (event.key === 'ArrowUp') { keys.ArrowUp = true; event.preventDefault(); }
+            if (event.key === 'ArrowDown') { keys.ArrowDown = true; event.preventDefault(); }
+            if (event.key === ' ') { keys.Space = true; event.preventDefault(); }
+            if (event.key === 'e' || event.key === 'E') { keys.KeyE = true; event.preventDefault(); }
+        }
+        function handleKeyUp(event) {
+            if (event.key === 'ArrowLeft') keys.ArrowLeft = false;
+            if (event.key === 'ArrowRight') keys.ArrowRight = false;
+            if (event.key === 'ArrowUp') keys.ArrowUp = false;
+            if (event.key === 'ArrowDown') keys.ArrowDown = false;
+            if (event.key === ' ') keys.Space = false;
+            if (event.key === 'e' || event.key === 'E') keys.KeyE = false;
+        }
+
+        // --- FUNÇÕES UTILITÁRIAS ---
+        function isClickInside(x, y, rect) {
+            return x >= rect.x && x <= rect.x + rect.width &&
+                   y >= rect.y && y <= rect.y + rect.height;
+        }
+        function AABBCollision(rect1, rect2) {
+            if (!rect1 || !rect2) return false;
+            
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        // --- INICIALIZAÇÃO ---
+        canvas.addEventListener('click', handleMouseClick);
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        
+        gameLoop();  
+
+        }); // Fim do listener 'DOMContentLoaded'
+    </script>
+</body>
+</html>
